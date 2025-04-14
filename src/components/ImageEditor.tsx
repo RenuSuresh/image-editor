@@ -61,7 +61,7 @@ export const ImageEditor = ({
 	const [imageFormats, setImageFormats] = useState<string[]>([]);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
-	const [zoomInOut, setZoomInOut] = useState("");
+	const [zoomInOut, setZoomInOut] = useState<"zoomin" | "zoomout" | "">("");
 	const [activeOperation, setActiveOperation] = useState(false);
 
 	function drawImage(imageList: any) {
@@ -82,7 +82,7 @@ export const ImageEditor = ({
 			const originalWidth = 460;
 			const originalHeight = 460;
 
-			// Diagonal for canvas size to prevent clipping on rotation
+			// Calculate canvas size based on zoom and rotation
 			const diagonal = Math.sqrt(originalWidth ** 2 + originalHeight ** 2);
 			const canvasSize = diagonal * zoom;
 
@@ -320,24 +320,22 @@ export const ImageEditor = ({
 	};
 
 	const zoomImage = (factor: any) => {
-		if (factor == "1") {
+		if (factor === 1) {
 			setZoomInOut("zoomin");
+			setZoom((prevZoom) => {
+				const newZoom = Math.min(prevZoom + 0.2, 5); // Max zoom of 5x
+				return newZoom;
+			});
 		} else {
 			setZoomInOut("zoomout");
+			setZoom((prevZoom) => {
+				const newZoom = Math.max(prevZoom - 0.2, 1); // Min zoom of 1x
+				return newZoom;
+			});
 		}
 		setCropMode(false);
 		setDoodleActive(false);
 		setRotateActive(false);
-		let scale = 1;
-		scale += 0.1;
-		setZoom(scale);
-		canvasRef.current?.style.setProperty("transform", `scale(${scale})`);
-
-		// setZoom((prevZoom) => {
-		//   const newZoom = prevZoom + factor;
-		//   // Clamp zoom between 1 and 5
-		//   return Math.max(1, Math.min(newZoom, 5));
-		// });
 	};
 
 	function confirmRotation() {
@@ -633,15 +631,15 @@ export const ImageEditor = ({
 
 	useEffect(() => {
 		if (imageList.length > 0) {
-			drawImage(imageList); // Redraw the current image
+			drawImage(imageList);
 		} else {
 			const ctx = ctxRef.current;
 			if (ctx) {
 				if (!canvasRef.current) return;
-				ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height); // Clear canvas if no images
+				ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 			}
 		}
-	}, [imageList, currentIndex, cropRect, rotation, zoom, currentIndex]);
+	}, [imageList, currentIndex, cropRect, rotation, zoom]);
 
 	useEffect(() => {
 		setZoom(1);
@@ -654,6 +652,15 @@ export const ImageEditor = ({
 	useEffect(() => {
 		if (imageSave) saveChanges();
 	}, [imageSave]);
+
+	useEffect(() => {
+		if (zoomInOut === "zoomin" || zoomInOut === "zoomout") {
+			const timer = setTimeout(() => {
+				setZoomInOut("");
+			}, 500);
+			return () => clearTimeout(timer);
+		}
+	}, [zoomInOut]);
 
 	return (
 		<ViewerContainer className={rootClassName}>
@@ -674,7 +681,10 @@ export const ImageEditor = ({
 						onMouseDown={handleMouseDown}
 						onMouseMove={handleMouseMove}
 						onMouseUp={handleMouseUp}
-						style={{ width: "100%", height: "100%" }}
+						style={{
+							transform: `scale(${zoom})`,
+							cursor: cropMode || doodleActive ? "crosshair" : "default",
+						}}
 					/>
 				</CanvasContainer>
 				<Button
@@ -708,7 +718,7 @@ export const ImageEditor = ({
 					disabled={zoom >= 5}
 					onClick={cropMode || doodleActive ? undefined : () => zoomImage(1)}
 					style={{
-						backgroundColor: zoomInOut == "zoomin" ? "#fff" : "transparent",
+						backgroundColor: zoomInOut === "zoomin" ? "#fff" : "transparent",
 						borderRadius: "4px",
 						padding: "4px",
 					}}
@@ -716,7 +726,7 @@ export const ImageEditor = ({
 					<ZoomIn
 						height={"20"}
 						width={"20"}
-						color={zoomInOut == "zoomin" ? "#000" : "#fff"}
+						color={zoomInOut === "zoomin" ? "#000" : "#fff"}
 					/>
 					<br />
 					<IconLabel>Zoom In</IconLabel>
@@ -725,7 +735,7 @@ export const ImageEditor = ({
 					disabled={zoom <= 1}
 					onClick={cropMode || doodleActive ? undefined : () => zoomImage(-1)}
 					style={{
-						backgroundColor: zoomInOut == "zoomout" ? "#fff" : "transparent",
+						backgroundColor: zoomInOut === "zoomout" ? "#fff" : "transparent",
 						borderRadius: "4px",
 						padding: "4px",
 					}}
@@ -733,10 +743,10 @@ export const ImageEditor = ({
 					<ZoomOut
 						height={20}
 						width={20}
-						color={zoomInOut == "zoomout" ? "#000" : "#fff"}
+						color={zoomInOut === "zoomout" ? "#000" : "#fff"}
 					/>
 					<br />
-					<IconLabel>Zoom Out </IconLabel>
+					<IconLabel>Zoom Out</IconLabel>
 				</IconButton>
 				<IconButton
 					active={cropMode}
@@ -845,8 +855,16 @@ const CanvasContainer = styled.div<any>`
 	height: 66vh;
 	overflow: auto;
 	position: relative;
-	object-fit: cover;
 	border: 1px solid grey;
+	display: flex;
+	justify-content: flex-start;
+	align-items: flex-start;
+
+	canvas {
+		width: 100%;
+		height: 100%;
+		transform-origin: top left;
+	}
 `;
 
 const ThumbnailContainer = styled.div<{ hidden?: boolean }>`
