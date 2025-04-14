@@ -63,6 +63,9 @@ export const ImageEditor = ({
 	const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
 	const [zoomInOut, setZoomInOut] = useState<"zoomin" | "zoomout" | "">("");
 	const [activeOperation, setActiveOperation] = useState(false);
+	const [operationType, setOperationType] = useState<
+		"none" | "crop" | "doodle" | "rotate" | "zoom"
+	>("none");
 
 	function drawImage(imageList: any) {
 		const canvas = canvasRef.current;
@@ -600,6 +603,50 @@ export const ImageEditor = ({
 		setImageCancel(false);
 	};
 
+	const handleOperation = (
+		type: "none" | "crop" | "doodle" | "rotate" | "zoom",
+		value?: any
+	) => {
+		setOperationType(type);
+		switch (type) {
+			case "crop":
+				if (!doodleActive && !rotateActive) {
+					setCropMode((prev) => !prev);
+					setDoodleActive(false);
+					setRotateActive(false);
+					setZoom(1);
+				}
+				break;
+			case "doodle":
+				if (!cropMode && !rotateActive) {
+					setDoodleActive((prev) => !prev);
+					setCropMode(false);
+					setRotateActive(false);
+					setZoom(1);
+				}
+				break;
+			case "rotate":
+				if (!cropMode && !doodleActive) {
+					rotateImage(90);
+					setCropMode(false);
+					setDoodleActive(false);
+					setZoom(1);
+				}
+				break;
+			case "zoom":
+				if (!cropMode && !doodleActive) {
+					zoomImage(value);
+				}
+				break;
+			case "none":
+				break;
+		}
+		setCropMode(false);
+		setDoodleActive(false);
+		setRotateActive(false);
+		setZoom(1);
+	};
+
 	useEffect(() => {
 		setImageList(images);
 		// Check image formats when the component mounts
@@ -716,7 +763,7 @@ export const ImageEditor = ({
 			<Controls>
 				<IconButton
 					disabled={zoom >= 5}
-					onClick={cropMode || doodleActive ? undefined : () => zoomImage(1)}
+					onClick={() => handleOperation("zoom", 1)}
 					style={{
 						backgroundColor: zoomInOut === "zoomin" ? "#fff" : "transparent",
 						borderRadius: "4px",
@@ -733,7 +780,7 @@ export const ImageEditor = ({
 				</IconButton>
 				<IconButton
 					disabled={zoom <= 1}
-					onClick={cropMode || doodleActive ? undefined : () => zoomImage(-1)}
+					onClick={() => handleOperation("zoom", -1)}
 					style={{
 						backgroundColor: zoomInOut === "zoomout" ? "#fff" : "transparent",
 						borderRadius: "4px",
@@ -750,11 +797,7 @@ export const ImageEditor = ({
 				</IconButton>
 				<IconButton
 					active={cropMode}
-					onClick={
-						cropMode || doodleActive || rotateActive
-							? undefined
-							: () => setCropMode((prev: boolean) => !prev)
-					}
+					onClick={() => handleOperation("crop")}
 					style={{
 						backgroundColor: cropMode ? "#fff" : "transparent",
 						borderRadius: "4px",
@@ -771,11 +814,7 @@ export const ImageEditor = ({
 				</IconButton>
 				<IconButton
 					active={doodleActive}
-					onClick={
-						cropMode || rotateActive
-							? undefined
-							: () => setDoodleActive((prev: boolean) => !prev)
-					}
+					onClick={() => handleOperation("doodle")}
 					style={{
 						backgroundColor: doodleActive ? "#fff" : "transparent",
 						borderRadius: "4px",
@@ -791,7 +830,7 @@ export const ImageEditor = ({
 					<IconLabel>Mask</IconLabel>
 				</IconButton>
 				<IconButton
-					onClick={cropMode || doodleActive ? undefined : () => rotateImage(90)}
+					onClick={() => handleOperation("rotate")}
 					style={{
 						backgroundColor: rotation > 0 ? "#fff" : "transparent",
 						borderRadius: "4px",
