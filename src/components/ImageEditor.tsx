@@ -31,32 +31,6 @@ export interface IProps {
 	rootClassName?: string;
 }
 
-// Types
-type OperationType = "none" | "crop" | "doodle" | "rotate" | "zoom";
-type ZoomDirection = "in" | "out";
-
-interface ImageEditorState {
-	isDrawing: boolean;
-	cropMode: boolean;
-	doodleActive: boolean;
-	rotation: number;
-	zoom: number;
-	rotateActive: boolean;
-	activeOperation: boolean;
-	operationType: OperationType;
-}
-
-const initialState: ImageEditorState = {
-	isDrawing: false,
-	cropMode: false,
-	doodleActive: false,
-	rotation: 0,
-	zoom: 1,
-	rotateActive: false,
-	activeOperation: false,
-	operationType: "none",
-};
-
 export const ImageEditor = ({
 	images,
 	currentIndex,
@@ -75,17 +49,23 @@ export const ImageEditor = ({
 	imageOperationPerform,
 	rootClassName,
 }: IProps) => {
-	// State
-	const [imageListtemp, setImageListtemp] = useState(images);
-	const [state, setState] = useState<ImageEditorState>(initialState);
+	const [imageListtemp, setImageListtemp] = useState(images); // Store the original image list
+	const [isDrawing, setIsDrawing] = useState(false);
+	const [cropMode, setCropMode] = useState(false);
+	const [doodleActive, setDoodleActive] = useState(false);
 	const [cropRect, setCropRect] = useState<ICropRect | null>(null);
+	const [rotation, setRotation] = useState(0);
 	const [startPoint, setStartPoint] = useState<IPoint | null>(null);
+	const [zoom, setZoom] = useState(1);
+	const [rotateActive, setRotateActive] = useState(false);
 	const [imageFormats, setImageFormats] = useState<string[]>([]);
-	const [zoomInOut, setZoomInOut] = useState<ZoomDirection | "">("");
-
-	// Refs
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
+	const [zoomInOut, setZoomInOut] = useState<"zoomin" | "zoomout" | "">("");
+	const [activeOperation, setActiveOperation] = useState(false);
+	const [originalWidth, setOriginalWidth] = useState(0);
+	const [originalHeight, setOriginalHeight] = useState(0);
+
 
 	function drawImage(imageList: any) {
 		const canvas = canvasRef.current;
@@ -102,37 +82,39 @@ export const ImageEditor = ({
 		image.src = imageList[currentIndex];
 
 		image.onload = () => {
-			const originalWidth = 460;
-			const originalHeight = 460;
+			setOriginalWidth(image.naturalWidth);
+			setOriginalHeight(image.naturalHeight);
+			const originalWidth = image.naturalWidth;
+			const originalHeight = image.naturalHeight;
 
 			// Calculate canvas size based on zoom and rotation
 			const diagonal = Math.sqrt(originalWidth ** 2 + originalHeight ** 2);
-			const canvasSize = diagonal * state.zoom;
+			const canvasSize = diagonal * zoom;
 
-			canvas.width = canvasSize;
-			canvas.height = canvasSize;
+			canvas.width = originalWidth * zoom;
+			canvas.height = originalHeight * zoom;
 
 			ctx.clearRect(0, 0, canvas.width, canvas.height);
 
 			// --- Draw Image ---
 			ctx.save();
 			ctx.translate(canvas.width / 2, canvas.height / 2); // center
-			ctx.scale(state.zoom, state.zoom);
-			ctx.rotate((state.rotation * Math.PI) / 180);
+			ctx.scale(zoom, zoom);
+			ctx.rotate((rotation * Math.PI) / 180);
 			ctx.translate(-originalWidth / 2, -originalHeight / 2); // shift image origin to top-left
 			ctx.drawImage(image, 0, 0, originalWidth, originalHeight);
 			ctx.restore();
 
 			// --- Draw Crop Overlay (in image space, rotated + zoomed) ---
-			if (state.cropMode && cropRect) {
+			if (cropMode && cropRect) {
 				ctx.save();
 				ctx.translate(canvas.width / 2, canvas.height / 2); // center
-				ctx.rotate((state.rotation * Math.PI) / 180); // rotate
-				ctx.scale(state.zoom, state.zoom); // zoom AFTER rotation for correct direction
+				ctx.rotate((rotation * Math.PI) / 180); // rotate
+				ctx.scale(zoom, zoom); // zoom AFTER rotation for correct direction
 				ctx.translate(-originalWidth / 2, -originalHeight / 2); // origin alignment
 
 				ctx.strokeStyle = "red";
-				ctx.lineWidth = 1 / state.zoom; // consistent width across zoom levels
+				ctx.lineWidth = 2 / zoom; // consistent width across zoom levels
 				ctx.strokeRect(cropRect.x, cropRect.y, cropRect.width, cropRect.height);
 				ctx.restore();
 			}
@@ -141,108 +123,128 @@ export const ImageEditor = ({
 		};
 	}
 
-	function getImageCoordinates(x: number, y: number): { x: number; y: number } {
+	function getImageCoordinates(
+		x: number,
+		y: number,
+		originalWidth: number,
+		originalHeight: number
+	  ): { x: number; y: number } {
 		const canvas = canvasRef.current;
 		if (!canvas) return { x: 0, y: 0 };
-
+	  
 		const rect = canvas.getBoundingClientRect();
 		const centerX = canvas.width / 2;
 		const centerY = canvas.height / 2;
-
+	  
 		// Convert mouse position to canvas coordinate system
-		let cx = x - rect.left;
-		let cy = y - rect.top;
-
-		// Scale coordinates to match canvas size
-		const scaleX = canvas.width / rect.width;
-		const scaleY = canvas.height / rect.height;
-		cx *= scaleX;
-		cy *= scaleY;
-
-		// Translate to center
+		let cx = (x - rect.left) * (canvas.width / rect.width);
+		let cy = (y - rect.top) * (canvas.height / rect.height);
+	  
+		// Translate to canvas center
 		cx -= centerX;
 		cy -= centerY;
-
+	  
 		// Undo zoom
-		cx /= state.zoom;
-		cy /= state.zoom;
-
+		cx /= zoom;
+		cy /= zoom;
+	  
 		// Undo rotation
-		const rad = (-state.rotation * Math.PI) / 180;
+		const rad = (-rotation * Math.PI) / 180;
 		const rotatedX = cx * Math.cos(rad) - cy * Math.sin(rad);
 		const rotatedY = cx * Math.sin(rad) + cy * Math.cos(rad);
-
-		// Convert to image space (0-460)
-		const imageX = rotatedX + 230; // 230 = originalWidth / 2
-		const imageY = rotatedY + 230;
-
-		// Clamp coordinates to image bounds
+	  
+		// Convert to image space
+		const imageX = rotatedX + originalWidth / 2;
+		const imageY = rotatedY + originalHeight / 2;
+	  
+		// Clamp to image bounds
 		return {
-			x: Math.max(0, Math.min(460, imageX)),
-			y: Math.max(0, Math.min(460, imageY)),
+		  x: Math.max(0, Math.min(originalWidth, imageX)),
+		  y: Math.max(0, Math.min(originalHeight, imageY)),
 		};
-	}
-
-	const handleMouseDown = (e: any) => {
+	  }
+	
+	 
+	  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement, MouseEvent>) => {
 		const rect = canvasRef?.current?.getBoundingClientRect();
 		if (!rect || !canvasRef.current) return;
-
-		if (state.cropMode) {
-			const { x: imgX, y: imgY } = getImageCoordinates(e.clientX, e.clientY);
-			setStartPoint({ x: imgX, y: imgY });
-		} else if (state.doodleActive) {
-			setState((prev) => ({ ...prev, isDrawing: true }));
-			if (!ctxRef.current) return;
-
-			const { x, y } = getImageCoordinates(e.clientX, e.clientY);
-			ctxRef.current.save();
-			ctxRef.current.translate(
-				canvasRef.current.width / 2,
-				canvasRef.current.height / 2
-			);
-			ctxRef.current.scale(state.zoom, state.zoom);
-			ctxRef.current.rotate((state.rotation * Math.PI) / 180);
-			ctxRef.current.translate(-230, -230); // -originalWidth/2, -originalHeight/2
-			ctxRef.current.beginPath();
-			ctxRef.current.moveTo(x, y);
-			ctxRef.current.restore();
+	  
+		if (cropMode) {
+		  const { x: imgX, y: imgY } = getImageCoordinates(
+			e.clientX,
+			e.clientY,
+			originalWidth,
+			originalHeight
+		  );
+		  setStartPoint({ x: imgX, y: imgY });
+		} else if (doodleActive) {
+		  setIsDrawing(true);
+		  if (!ctxRef.current) return;
+	  
+		  const { x, y } = getImageCoordinates(
+			e.clientX,
+			e.clientY,
+			originalWidth,
+			originalHeight
+		  );
+	  
+		  const ctx = ctxRef.current;
+		  ctx.save();
+		  ctx.translate(canvasRef.current.width / 2, canvasRef.current.height / 2);
+		  ctx.scale(zoom, zoom);
+		  ctx.rotate((rotation * Math.PI) / 180);
+		  ctx.translate(-originalWidth / 2, -originalHeight / 2);
+		  ctx.beginPath();
+		  ctx.moveTo(x, y);
+		  ctx.restore();
 		}
-	};
+	  };
+	  
 
-	const handleMouseMove = (e: any) => {
+	  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement, MouseEvent>) => {
 		const rect = canvasRef.current?.getBoundingClientRect();
 		if (!rect || !canvasRef.current) return;
-
-		if (state.cropMode && startPoint) {
-			const { x: imgX, y: imgY } = getImageCoordinates(e.clientX, e.clientY);
-			const width = imgX - startPoint.x;
-			const height = imgY - startPoint.y;
-			setCropRect({ x: startPoint.x, y: startPoint.y, width, height });
-		} else if (state.doodleActive && state.isDrawing) {
-			if (!ctxRef.current) return;
-
-			const { x, y } = getImageCoordinates(e.clientX, e.clientY);
-			ctxRef.current.save();
-			ctxRef.current.translate(
-				canvasRef.current.width / 2,
-				canvasRef.current.height / 2
-			);
-			ctxRef.current.scale(state.zoom, state.zoom);
-			ctxRef.current.rotate((state.rotation * Math.PI) / 180);
-			ctxRef.current.translate(-230, -230); // -originalWidth/2, -originalHeight/2
-			ctxRef.current.lineTo(x, y);
-			ctxRef.current.strokeStyle = "blue";
-			ctxRef.current.lineWidth = 2;
-			ctxRef.current.stroke();
-			ctxRef.current.restore();
+	  
+		if (cropMode && startPoint) {
+		  const { x: imgX, y: imgY } = getImageCoordinates(
+			e.clientX,
+			e.clientY,
+			originalWidth,
+			originalHeight
+		  );
+		  const width = imgX - startPoint.x;
+		  const height = imgY - startPoint.y;
+		  setCropRect({ x: startPoint.x, y: startPoint.y, width, height });
+		} else if (doodleActive && isDrawing) {
+		  if (!ctxRef.current) return;
+	  
+		  const { x, y } = getImageCoordinates(
+			e.clientX,
+			e.clientY,
+			originalWidth,
+			originalHeight
+		  );
+	  
+		  const ctx = ctxRef.current;
+		  ctx.save();
+		  ctx.translate(canvasRef.current.width / 2, canvasRef.current.height / 2);
+		  ctx.scale(zoom, zoom);
+		  ctx.rotate((rotation * Math.PI) / 180);
+		  ctx.translate(-originalWidth / 2, -originalHeight / 2);
+		  ctx.lineTo(x, y);
+		  ctx.strokeStyle = "blue";
+		  ctx.lineWidth = 12;
+		  ctx.stroke();
+		  ctx.restore();
 		}
-	};
+	  };
+	  
 
 	const handleMouseUp = () => {
-		if (state.cropMode) {
+		if (cropMode) {
 			setStartPoint(null);
-		} else if (state.doodleActive) {
-			setState((prev) => ({ ...prev, isDrawing: false }));
+		} else if (doodleActive) {
+			setIsDrawing(false);
 		}
 	};
 
@@ -265,8 +267,8 @@ export const ImageEditor = ({
 
 		image.onload = () => {
 			const tempCanvas = document.createElement("canvas");
-			tempCanvas.width = 460;
-			tempCanvas.height = 460;
+			tempCanvas.width = image.naturalWidth;
+tempCanvas.height = image.naturalHeight;
 
 			const tempCtx = tempCanvas.getContext("2d");
 			if (!tempCtx) {
@@ -315,8 +317,10 @@ export const ImageEditor = ({
 			setImageList(updatedImages);
 			setImageOperationPerform(true);
 			setCropRect(null);
-			setState((prev) => ({ ...prev, cropMode: false }));
-			drawImage(updatedImages);
+			setCropMode(false);
+			setTimeout(() => {
+				drawImage(updatedImages); // Re-draw without crop overlay
+			  }, 0);
 		};
 
 		image.onerror = () => {
@@ -325,50 +329,50 @@ export const ImageEditor = ({
 	}
 
 	function saveDoodle() {
-		setState((prev) => ({ ...prev, cropMode: false }));
+		setCropMode(false);
 		const canvas = canvasRef.current;
-		const doodledImage = canvas?.toDataURL();
+		const doodledImage = canvas?.toDataURL("image/jpeg", 0.99);
 		const updatedImages = [...imageList];
 		updatedImages[currentIndex] = doodledImage;
 
 		setImageList(updatedImages);
 		setImageOperationPerform(true);
-		setState((prev) => ({ ...prev, doodleActive: false }));
+		setDoodleActive(false);
 	}
 
-	const rotateImage = (angle: number) => {
-		setState((prev) => ({
-			...prev,
-			rotation: prev.rotation + angle,
-			rotateActive: true,
-			zoom: 1,
-		}));
+	const rotateImage = (angle: any) => {
+		setZoom(1);
+		setRotation((prev) => prev + angle);
+		setRotateActive(true);
 	};
 
-	const handleZoom = (direction: number) => {
-		if (direction === 1) {
-			setZoomInOut("in");
-			setState((prev) => ({
-				...prev,
-				zoom: Math.min(prev.zoom + 0.2, 5),
-			}));
+	const zoomImage = (factor: any) => {
+		if (factor === 1) {
+			setZoomInOut("zoomin");
+			setZoom((prevZoom) => {
+				const newZoom = Math.min(prevZoom + 1, 5); // Max zoom of 5x
+				return newZoom;
+			});
 		} else {
-			setZoomInOut("out");
-			setState((prev) => ({
-				...prev,
-				zoom: Math.max(prev.zoom - 0.2, 1),
-			}));
+			setZoomInOut("zoomout");
+			setZoom((prevZoom) => {
+				const newZoom = Math.max(prevZoom - 1, 1); // Min zoom of 1x
+				return newZoom;
+			});
 		}
+		setCropMode(false);
+		setDoodleActive(false);
+		setRotateActive(false);
 	};
 
 	function confirmRotation() {
-		const canvas = canvasRef.current;
-		const rotatedImage = canvas?.toDataURL();
+		const canvas = canvasRef?.current;
+		const rotatedImage = canvas?.toDataURL("image/jpeg", 0.99);
 		const updatedImages = [...imageList];
 		updatedImages[currentIndex] = rotatedImage;
 		setImageOperationPerform(true);
 		setImageList(updatedImages);
-		setState((prev) => ({ ...prev, rotation: 0 }));
+		setRotation(0);
 	}
 
 	const getImageFormatFromResponse = async (url: any) => {
@@ -462,7 +466,7 @@ export const ImageEditor = ({
 		);
 
 		// Get image format
-		const originalFormat = imageFormats[currentIndex] || "png"; // Default format
+		const originalFormat = imageFormats[currentIndex] || "jpeg"; // Default format
 		const extension = originalFormat === "jpeg" ? "jpg" : originalFormat;
 		const mimeType = `image/jpeg`;
 
@@ -473,7 +477,7 @@ export const ImageEditor = ({
 		croppedCanvas.toBlob(
 			(blob) => {
 				if (blob) {
-					const file = new File([blob], `cropped-image.jpeg`, {
+					const file = new File([blob], `edited-image.jpeg`, {
 						type: mimeType,
 					});
 					setSelectedFile(file);
@@ -494,10 +498,9 @@ export const ImageEditor = ({
 			return;
 		}
 
-		const originalFormat = imageFormats[currentIndex] || "jpeg"; // Default to PNG if format is unknown
+		const originalFormat = imageFormats[currentIndex] || "jpeg"; // Default to jpeg if format is unknown
 		const extension = originalFormat === "jpeg" ? "jpg" : originalFormat;
-		const mimeType = `image/${extension}`;
-		const imageData = canvas.toDataURL(mimeType);
+		const imageData = canvas.toDataURL("image/jpeg")
 
 		if (!imageData) {
 			console.error("Failed to generate image data URL.");
@@ -538,28 +541,25 @@ export const ImageEditor = ({
 
 	function saveChanges() {
 		// Save crop if in crop mode
-		if (state.cropMode && cropRect) {
+		if (cropMode && cropRect) {
 			saveCrop(); // Ensure crop is saved
-			setState((prev) => ({ ...prev, activeOperation: false }));
+			setActiveOperation(false);
 		}
 
 		// Save doodle if active
-		if (state.doodleActive) {
+		if (doodleActive) {
 			saveDoodle();
-			setState((prev) => ({ ...prev, activeOperation: false }));
+			setActiveOperation(false);
 		}
-		setState((prev) => ({ ...prev, rotateActive: false }));
+		setRotateActive(false);
 		// Confirm rotation if rotation is applied
-		if (state.rotation !== 0) {
+		if (rotation !== 0) {
 			confirmRotation();
-			setState((prev) => ({
-				...prev,
-				rotateActive: false,
-				activeOperation: false,
-			}));
+			setRotateActive(false);
+			setActiveOperation(false);
 		}
 
-		if (state.zoom !== 1) {
+		if (zoom !== 1) {
 			const canvas = canvasRef.current;
 			const zoomedImage = canvas?.toDataURL();
 			const updatedImages = [...imageList];
@@ -578,106 +578,52 @@ export const ImageEditor = ({
 		}
 
 		// Reset states after saving
-		setState((prev) => ({
-			...prev,
-			cropMode: false,
-			doodleActive: false,
-			zoom: 1,
-			rotation: 0,
-			cropRect: null,
-			activeOperation: false,
-		}));
+		setCropMode(false);
+		setDoodleActive(false);
+		setZoom(1);
+		setRotation(0);
+		setCropRect(null);
+		setActiveOperation(false);
 	}
 
 	const cancelChanges = () => {
 		setCropRect(null);
 		setImageCancel(false);
-		setState((prev) => ({
-			...prev,
-			cropMode: false,
-			doodleActive: false,
-			rotateActive: false,
-		}));
+		setCropMode(false);
+		setDoodleActive(false);
+		setRotateActive(false);
 		drawImage(imageList);
-		setZoomInOut("");
-		setState((prev) => ({ ...prev, zoom: 1 }));
-		if (state.rotation > 0) {
-			setState((prev) => ({ ...prev, rotation: 0 }));
+		setZoom(1);
+		const canvas = canvasRef.current;
+		const ctx = ctxRef.current;
+		if (ctx) {
+			if (!canvas) return;
+			ctx.clearRect(0, 0, canvas?.width, canvas?.height);
+		}
+		if (rotation > 0) {
+			setRotation(0);
 		}
 	};
 
 	const cancelChangesAll = () => {
 		setCropRect(null);
-		setState((prev) => ({
-			...prev,
-			cropMode: false,
-			doodleActive: false,
-			rotateActive: false,
-			activeOperation: false,
-		}));
+		setCropMode(false);
+		setDoodleActive(false);
+		setRotateActive(false);
 		setImageCancel(false);
 		setImageOperationPerform(false);
 		setZoomInOut("");
 		drawImage(imageListtemp);
-		setState((prev) => ({ ...prev, zoom: 1 }));
-		if (state.rotation > 0) {
-			setState((prev) => ({ ...prev, rotation: 0 }));
+		setZoom(1);
+		const canvas = imageList[currentIndex];
+		const ctx = ctxRef.current;
+		if (ctx) {
+			ctx.clearRect(0, 0, canvas.width, canvas.height);
+		}
+		if (rotation > 0) {
+			setRotation(0);
 		}
 		setImageCancel(false);
-	};
-
-	const handleOperation = (type: OperationType, value?: any) => {
-		setState((prev) => ({ ...prev, operationType: type }));
-
-		switch (type) {
-			case "crop":
-				if (!state.doodleActive && !state.rotateActive) {
-					setState((prev) => ({
-						...prev,
-						cropMode: !prev.cropMode,
-						doodleActive: false,
-						rotateActive: false,
-						zoom: 1,
-					}));
-				}
-				break;
-			case "doodle":
-				if (!state.cropMode && !state.rotateActive) {
-					setState((prev) => ({
-						...prev,
-						doodleActive: !prev.doodleActive,
-						cropMode: false,
-						rotateActive: false,
-						zoom: 1,
-					}));
-				}
-				break;
-			case "rotate":
-				if (!state.cropMode && !state.doodleActive) {
-					rotateImage(90);
-					setState((prev) => ({
-						...prev,
-						cropMode: false,
-						doodleActive: false,
-						zoom: 1,
-					}));
-				}
-				break;
-			case "zoom":
-				if (!state.cropMode && !state.doodleActive) {
-					handleZoom(value);
-				}
-				break;
-			case "none":
-				setState((prev) => ({
-					...prev,
-					cropMode: false,
-					doodleActive: false,
-					rotateActive: false,
-					zoom: 1,
-				}));
-				break;
-		}
 	};
 
 	useEffect(() => {
@@ -700,23 +646,14 @@ export const ImageEditor = ({
 	}, [imageList]);
 
 	useEffect(() => {
-		setState((prev) => ({
-			...prev,
-			activeOperation: state.doodleActive || state.rotation !== 0,
-		}));
-		if (state.doodleActive) {
-			setState((prev) => ({ ...prev, cropMode: false }));
+		setActiveOperation(doodleActive || rotation !== 0);
+		if (doodleActive) {
+			setCropMode(false);
 		}
-		if (state.doodleActive || state.rotation !== 0 || state.cropMode) {
+		if (doodleActive || rotation !== 0 || cropMode) {
 			setZoomInOut("");
 		}
-	}, [
-		state.cropMode,
-		state.doodleActive,
-		state.rotation,
-		state.zoom,
-		state.activeOperation,
-	]);
+	}, [cropMode, doodleActive, rotation, zoom, activeOperation]);
 
 	useEffect(() => {
 		if (imageList.length > 0) {
@@ -728,11 +665,11 @@ export const ImageEditor = ({
 				ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 			}
 		}
-	}, [imageList, currentIndex, cropRect, state.rotation, state.zoom]);
+	}, [imageList, currentIndex, cropRect, rotation, zoom]);
 
 	useEffect(() => {
-		setState((prev) => ({ ...prev, zoom: 1 }));
-	}, [state.cropMode, state.doodleActive, state.rotateActive]);
+		setZoom(1);
+	}, [cropMode, doodleActive, rotateActive]);
 
 	useEffect(() => {
 		if (imageCancel) cancelChangesAll();
@@ -743,7 +680,7 @@ export const ImageEditor = ({
 	}, [imageSave]);
 
 	useEffect(() => {
-		if (zoomInOut === "in" || zoomInOut === "out") {
+		if (zoomInOut === "zoomin" || zoomInOut === "zoomout") {
 			const timer = setTimeout(() => {
 				setZoomInOut("");
 			}, 500);
@@ -771,9 +708,8 @@ export const ImageEditor = ({
 						onMouseMove={handleMouseMove}
 						onMouseUp={handleMouseUp}
 						style={{
-							transform: `scale(${state.zoom})`,
-							cursor:
-								state.cropMode || state.doodleActive ? "crosshair" : "default",
+							transform: `scale(${zoom})`,
+							cursor: cropMode || doodleActive ? "crosshair" : "default",
 						}}
 					/>
 				</CanvasContainer>
@@ -790,25 +726,25 @@ export const ImageEditor = ({
 				</Button>
 			</MainViewer>
 			<MarginContainer>
-				<IconButton onClick={saveChanges} hidden={!state.activeOperation}>
+				<IconButton onClick={saveChanges} hidden={!activeOperation}>
 					<CheckTickIcon height={20} width={20} />
 				</IconButton>
-				<IconButton onClick={cancelChanges} hidden={!state.activeOperation}>
+				<IconButton onClick={cancelChanges} hidden={!activeOperation}>
 					<CrossIcon height={20} width={20} />
 				</IconButton>
-				<IconButton onClick={saveCrop} hidden={!state.cropMode}>
+				<IconButton onClick={saveCrop} hidden={!cropMode}>
 					<CheckTickIcon height={20} width={20} color={"#fff"} />
 				</IconButton>
-				<IconButton onClick={cancelChanges} hidden={!state.cropMode}>
+				<IconButton onClick={cancelChanges} hidden={!cropMode}>
 					<CrossIcon height={20} width={20} color={"#fff"} />
 				</IconButton>
 			</MarginContainer>
 			<Controls>
 				<IconButton
-					disabled={state.zoom >= 5}
-					onClick={() => handleOperation("zoom", 1)}
+					disabled={zoom >= 5}
+					onClick={cropMode || doodleActive ? undefined : () => zoomImage(1)}
 					style={{
-						backgroundColor: zoomInOut === "in" ? "#fff" : "transparent",
+						backgroundColor: zoomInOut === "zoomin" ? "#fff" : "transparent",
 						borderRadius: "4px",
 						padding: "4px",
 					}}
@@ -816,16 +752,16 @@ export const ImageEditor = ({
 					<ZoomIn
 						height={"20"}
 						width={"20"}
-						color={zoomInOut === "in" ? "#000" : "#fff"}
+						color={zoomInOut === "zoomin" ? "#000" : "#fff"}
 					/>
 					<br />
 					<IconLabel>Zoom In</IconLabel>
 				</IconButton>
 				<IconButton
-					disabled={state.zoom <= 1}
-					onClick={() => handleOperation("zoom", -1)}
+					disabled={zoom <= 1}
+					onClick={cropMode || doodleActive ? undefined : () => zoomImage(-1)}
 					style={{
-						backgroundColor: zoomInOut === "out" ? "#fff" : "transparent",
+						backgroundColor: zoomInOut === "zoomout" ? "#fff" : "transparent",
 						borderRadius: "4px",
 						padding: "4px",
 					}}
@@ -833,16 +769,20 @@ export const ImageEditor = ({
 					<ZoomOut
 						height={20}
 						width={20}
-						color={zoomInOut === "out" ? "#000" : "#fff"}
+						color={zoomInOut === "zoomout" ? "#000" : "#fff"}
 					/>
 					<br />
 					<IconLabel>Zoom Out</IconLabel>
 				</IconButton>
 				<IconButton
-					active={state.cropMode}
-					onClick={() => handleOperation("crop")}
+					active={cropMode}
+					onClick={
+						cropMode || doodleActive || rotateActive
+							? undefined
+							: () => setCropMode((prev: boolean) => !prev)
+					}
 					style={{
-						backgroundColor: state.cropMode ? "#fff" : "transparent",
+						backgroundColor: cropMode ? "#fff" : "transparent",
 						borderRadius: "4px",
 						padding: "4px",
 					}}
@@ -850,16 +790,20 @@ export const ImageEditor = ({
 					<CropIcon
 						height={"20"}
 						width={"20"}
-						color={state.cropMode ? "#000" : "#fff"}
+						color={cropMode ? "#000" : "#fff"}
 					/>
 					<br />
 					<IconLabel>Crop</IconLabel>
 				</IconButton>
 				<IconButton
-					active={state.doodleActive}
-					onClick={() => handleOperation("doodle")}
+					active={doodleActive}
+					onClick={
+						cropMode || rotateActive
+							? undefined
+							: () => setDoodleActive((prev: boolean) => !prev)
+					}
 					style={{
-						backgroundColor: state.doodleActive ? "#fff" : "transparent",
+						backgroundColor: doodleActive ? "#fff" : "transparent",
 						borderRadius: "4px",
 						padding: "4px",
 					}}
@@ -867,15 +811,15 @@ export const ImageEditor = ({
 					<MaskIcon
 						height={"18"}
 						width={"18"}
-						color={state.doodleActive ? "#000" : "#fff"}
+						color={doodleActive ? "#000" : "#fff"}
 					/>
 					<br />
 					<IconLabel>Mask</IconLabel>
 				</IconButton>
 				<IconButton
-					onClick={() => handleOperation("rotate")}
+					onClick={cropMode || doodleActive ? undefined : () => rotateImage(90)}
 					style={{
-						backgroundColor: state.rotation > 0 ? "#fff" : "transparent",
+						backgroundColor: rotation > 0 ? "#fff" : "transparent",
 						borderRadius: "4px",
 						padding: "4px",
 					}}
@@ -883,7 +827,7 @@ export const ImageEditor = ({
 					<RotateIcon
 						height={"20"}
 						width={"20"}
-						color={state.rotation > 0 ? "#000" : "#fff"}
+						color={rotation > 0 ? "#000" : "#fff"}
 					/>
 					<br />
 					<IconLabel>Rotate</IconLabel>
@@ -937,7 +881,6 @@ const CanvasContainer = styled.div<any>`
 	height: 66vh;
 	overflow: auto;
 	position: relative;
-	border: 1px solid grey;
 	display: flex;
 	justify-content: flex-start;
 	align-items: flex-start;
